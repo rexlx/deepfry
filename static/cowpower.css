@@ -1,0 +1,110 @@
+@font-face {
+    font-family: 'Intel One Mono';
+    src: url('/static/IntelOneMono-Regular.woff2') format('woff2'),
+        url('/static/IntelOneMono-Regular.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    font-family: 'Intel One Mono', monospace;
+    background-color: #040008;
+    color: #4a7887;
+}
+
+.search-form {
+    display: flex;
+    margin-bottom: 1rem;
+}
+
+.search-form input[type="text"] {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #4a7887;
+    border-radius: 4px 0 0 4px;
+    background-color: #000;
+    color: #4a7887;
+}
+
+.search-form button {
+    padding: 0.5rem 1rem;
+    border: 1px solid #4a7887;
+    border-radius: 0 4px 4px 0;
+    background-color: #4a7887;
+    color: #000;
+    cursor: pointer;
+}
+
+.search-form button:hover {
+    background-color: rgb(89, 58, 119);
+}
+
+.search-area {
+    margin: 0 auto;
+    width: 500px;
+    background-color: #000;
+}
+
+.container {
+    background-color: #000;
+    position: relative;
+    width: 500px;
+    /* Add a width to the container */
+    height: 400px;
+    overflow-y: scroll;
+    margin: 0 auto;
+    box-shadow: -10px 10px 20px #3232a8;
+}
+
+.scrollbar {
+    position: absolute;
+    width: 10px;
+    /* Add a width to the scrollbar */
+    right: 0;
+    top: 0;
+    background-color: #222;
+    /* Add background color for visibility */
+}
+
+.thumb {
+    width: 100%;
+    min-height: 20px;
+    /* Ensure minimum height */
+    background: #444;
+    cursor: pointer;
+}
+
+.results {
+    margin-bottom: 1rem;
+    color: rgb(12, 160, 86);
+}
+
+/* Loading indicator styles */
+.loading {
+    opacity: 0.5;
+    /* Dim the content when loading */
+    pointer-events: none;
+    /* Prevent interactions while loading */
+}
+
+#loader {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    display: none;
+    /* Initially hidden */
+    color: #0f0;
+    font-size: 1.2em;
+}
+
+h1 {
+    background-color: #000;
+    color: #705d8f;
+    position: sticky;
+    top: 0;
+    /* Stick to the top of the viewport */
+    z-index: 10;
+    /* Ensure it's above other elements */
+}

@@ -6,117 +6,11 @@
   <script src="https://unpkg.com/htmx.org@2.0.4"
     integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
     crossorigin="anonymous"></script>
-  <style>
-    @font-face {
-      font-family: 'Intel One Mono';
-      src: url('/static/IntelOneMono-Regular.woff2') format('woff2'),
-        url('/static/IntelOneMono-Regular.woff') format('woff');
-      font-weight: normal;
-      font-style: normal;
-    }
-
-    body {
-      font-family: 'Intel One Mono', monospace;
-      background-color: #040008;
-      color: #4a7887;
-    }
-
-    .search-form {
-      display: flex;
-      margin-bottom: 1rem;
-    }
-
-    .search-form input[type="text"] {
-      flex: 1;
-      padding: 0.5rem;
-      border: 1px solid #4a7887;
-      border-radius: 4px 0 0 4px;
-      background-color: #000;
-      color: #4a7887;
-    }
-
-    .search-form button {
-      padding: 0.5rem 1rem;
-      border: 1px solid #4a7887;
-      border-radius: 0 4px 4px 0;
-      background-color: #4a7887;
-      color: #000;
-      cursor: pointer;
-    }
-
-    .search-form button:hover {
-      background-color:rgb(89, 58, 119);
-    }
-
-    .container {
-      background-color: #000;
-      position: relative;
-      width: 500px;
-      /* Add a width to the container */
-      height: 400px;
-      overflow-y: scroll;
-      margin: 0 auto;
-      box-shadow: -10px 10px 20px rgba(10, 175, 115, 0.5);
-    }
-
-    .scrollbar {
-      position: absolute;
-      width: 10px;
-      /* Add a width to the scrollbar */
-      right: 0;
-      top: 0;
-      background-color: #222;
-      /* Add background color for visibility */
-    }
-
-    .thumb {
-      width: 100%;
-      min-height: 20px;
-      /* Ensure minimum height */
-      background: #444;
-      cursor: pointer;
-    }
-
-    .results {
-      margin-bottom: 1rem;
-      color:rgb(12, 160, 86);
-    }
-
-    /* Loading indicator styles */
-    .loading {
-      opacity: 0.5;
-      /* Dim the content when loading */
-      pointer-events: none;
-      /* Prevent interactions while loading */
-    }
-
-    #loader {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 10;
-      display: none;
-      /* Initially hidden */
-      color: #0f0;
-      font-size: 1.2em;
-    }
-    h1 {
-      color: #705d8f;
-    }
-  </style>
+    <link rel="stylesheet" href="/static/cowpower.css"> 
 </head>
 
 <body>
   <div class="container">
-    <div>
-      <h1>search</h1>
-      <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form" hx-on::after-request="clearInput()">
-        <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
-        <button type="submit">search</button>
-      </form>
-    </div>
-    <div id="result" class="results"></div>
     <div id="loader">Loading...</div>
     <div class="scrollbar">
       <div class="thumb"></div>
@@ -124,93 +18,16 @@
     <h1>ip addresses</h1>
     <ul id="data-list"></ul>
   </div>
+	<div class="search-area">
+      <h1>search</h1>
+      <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form" hx-on::after-request="clearInput()">
+        <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
+        <button type="submit">search</button>
+      </form>
+	  <div id="result" class="results"></div>
+    </div>
 
-  <script>
-    const dataList = document.getElementById('data-list');
-    const scrollbar = document.querySelector('.scrollbar');
-    const thumb = document.querySelector('.thumb');
-    const container = document.querySelector('.container');
-    const loader = document.getElementById('loader');
-
-    const itemsPerPage = 50; // Reduce items per page for smoother loading
-    let startIndex = 0;
-    let isFetching = false; // Flag to prevent concurrent fetches
-
-    // Function to fetch data from the server
-    async function fetchData(start, end) {
-      if (isFetching) return; // Prevent fetching if already fetching
-      isFetching = true;
-      loader.style.display = 'block'; // Show loading indicator
-      container.classList.add('loading'); // Dim the content
-
-      try {
-        const response = await fetch("http://localhost:8080/cache/ips?start=" + start + "&end=" + end);
-        const data = await response.json();
-        return data;
-      } catch (error) {
-        console.error("Failed to fetch data:", error);
-        return []; // Return an empty array on error
-      } finally {
-        isFetching = false;
-        loader.style.display = 'none'; // Hide loading indicator
-        container.classList.remove('loading'); // Restore content visibility
-      }
-    }
-
-    // Function to append data to the list
-    function appendData(data) {
-      data.forEach(item => {
-        const li = document.createElement('li');
-        li.textContent = item;
-        dataList.appendChild(li);
-      });
-    }
-
-    // Function to update the scrollbar thumb position and size
-    function updateScrollbar() {
-      const scrollTop = container.scrollTop;
-      const scrollHeight = container.scrollHeight - container.clientHeight;
-      const scrollPercent = scrollTop / scrollHeight;
-
-      const thumbHeight = Math.max(20, container.clientHeight * (container.clientHeight / container.scrollHeight));
-      const thumbTop = scrollPercent * (container.clientHeight - thumbHeight);
-
-      thumb.style.height = thumbHeight + "px";
-      thumb.style.top = thumbTop + "px";
-    }
-
-    // Initial data fetch and render
-    fetchData(startIndex, startIndex + itemsPerPage)
-      .then(data => {
-        appendData(data);
-        updateScrollbar();
-        startIndex += data.length; // Update start index based on fetched data
-      });
-
-    container.addEventListener('scroll', () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-
-      // Check if the user has scrolled to the bottom
-      if (scrollTop + clientHeight >= scrollHeight - 50) { // 50px threshold
-        fetchData(startIndex, startIndex + itemsPerPage)
-          .then(data => {
-            if (data.length > 0) {
-              appendData(data);
-              updateScrollbar();
-              startIndex += data.length; // Update start index based on fetched data
-            }
-          });
-      }
-
-      updateScrollbar();
-    });
-    function clearInput() {
-    document.getElementById('search-input').value = '';
-  }
-
-    // Update scrollbar when the window is resized
-    window.addEventListener('resize', updateScrollbar);
-  </script>
+  <script src="/static/f.js"></script>
 
 </body>
 
