@@ -80,7 +80,7 @@ func (s *Server) Ip4sHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Ipv4ViewHandler(w http.ResponseWriter, r *http.Request) {
 	// view := fmt.Sprintf(BaseHtml)
-	fmt.Fprintf(w, BaseHtml)
+	fmt.Fprint(w, BaseHtml)
 }
 
 func (s *Server) GetIpsAPIHandler(w http.ResponseWriter, r *http.Request) {

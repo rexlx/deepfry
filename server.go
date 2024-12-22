@@ -145,8 +145,15 @@ var BaseHtml string = `
       height: 400px;
       overflow-y: scroll;
       margin: 0 auto;
-      box-shadow: -10px 10px 20px rgba(10, 175, 115, 0.5);
+      box-shadow: -10px 10px 20px #09b576;
     }
+	
+	.search-area {
+	  background-color: #000;
+	  position: relative;
+	  width: 500px;
+	  margin: 0 auto;
+}
 
     .scrollbar {
       position: absolute;
@@ -198,14 +205,6 @@ var BaseHtml string = `
 
 <body>
   <div class="container">
-    <div>
-      <h1>search</h1>
-      <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form" hx-on::after-request="clearInput()">
-        <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
-        <button type="submit">search</button>
-      </form>
-    </div>
-    <div id="result" class="results"></div>
     <div id="loader">Loading...</div>
     <div class="scrollbar">
       <div class="thumb"></div>
@@ -213,6 +212,14 @@ var BaseHtml string = `
     <h1>ip addresses</h1>
     <ul id="data-list"></ul>
   </div>
+	<div class="search-area">
+      <h1>search</h1>
+      <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form" hx-on::after-request="clearInput()">
+        <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
+        <button type="submit">search</button>
+      </form>
+	  <div id="result" class="results"></div>
+    </div>
 
   <script>
     const dataList = document.getElementById('data-list');
@@ -220,6 +227,7 @@ var BaseHtml string = `
     const thumb = document.querySelector('.thumb');
     const container = document.querySelector('.container');
     const loader = document.getElementById('loader');
+	let currentColor = '#09b576';
 
     const itemsPerPage = 50; // Reduce items per page for smoother loading
     let startIndex = 0;
@@ -286,6 +294,8 @@ var BaseHtml string = `
             if (data.length > 0) {
               appendData(data);
               updateScrollbar();
+			  currentColor = currentColor === 'red' ? '#09b576' : 'red';
+	  		  container.style.boxShadow = '-10px 10px 20px ' + currentColor;
               startIndex += data.length; // Update start index based on fetched data
             }
           });
