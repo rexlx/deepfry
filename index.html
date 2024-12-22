@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IP4s</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"
+        integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
+        crossorigin="anonymous"></script>
+    <style>
+        @font-face {
+            font-family: 'Intel One Mono';
+            src: url('/static/IntelOneMono-Regular.woff2') format('woff2'),
+                url('/static/IntelOneMono-Regular.woff') format('woff');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        body {
+            font-family: 'Intel One Mono', monospace;
+            background-color: #000;
+            color: #fff;
+        }
+
+        .container {
+            position: relative;
+            height: 400px;
+            overflow-y: scroll;
+            margin: 0 auto;
+        }
+
+        .scrollbar {
+            position: absolute;
+            right: 0;
+            top: 0;
+        }
+
+        .thumb {
+            width: 100%;
+            height: 20px;
+            background: #888;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="scroll-container">
+        <div>
+            <h1>search</h1>
+            <form hx-get="/api/ips" hx-target="#result">
+                <input type="text" name="q" placeholder="Search IP4s">
+                <button type="submit">Search</button>
+            </form>
+        </div>
+        <div id="result"></div>
+        <h1>IP4s</h1>
+        <ul id="data-list" 
+            hx-get="/api/ips?start=0&end=100" 
+            hx-trigger="scroll" 
+            hx-target="this"
+            hx-swap="beforeend">
+        </ul>
+        <div id="loader" style="display: none;">Loading...</div>
+    </div>
+
+    <script>
+        // Function to extract the 'end' parameter from a URL
+        function getEndFromURL(url) {
+            const urlParams = new URLSearchParams(url);
+            return parseInt(urlParams.get('end')) || 0;
+        }
+
+        document.body.addEventListener('htmx:beforeRequest', function (evt) {
+            if (evt.detail.target.id === 'data-list') {
+                document.getElementById('loader').style.display = 'block';
+            }
+        });
+
+        document.body.addEventListener('htmx:afterRequest', function (evt) {
+            if (evt.detail.target.id === 'data-list') {
+                document.getElementById('loader').style.display = 'none';
+            }
+        });
+
+        document.body.addEventListener('htmx:afterSwap', function (event) {
+            if (event.detail.target.id === 'data-list') {
+                // Use the helper function to get the current 'end'
+                const currentEnd = getEndFromURL(event.detail.xhr.responseURL);
+                const newStart = currentEnd;
+                const newEnd = newStart + 100;
+
+                // Set the new hx-get attribute
+                const dataList = document.getElementById('data-list');
+                dataList.setAttribute('hx-get', '/api/ips?start=' + newStart + '&end=' + newEnd);
+            }
+        });
+    </script>
+</body>
+
+</html>
