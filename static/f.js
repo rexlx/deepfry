@@ -17,7 +17,7 @@ async function fetchData(start, end) {
     container.classList.add('loading'); // Dim the content
 
     try {
-        const response = await fetch("http://localhost:8080/cache/ips?start=" + start + "&end=" + end);
+        const response = await fetch("/cache/ips?start=" + start + "&end=" + end);
         const data = await response.json();
         return data;
     } catch (error) {

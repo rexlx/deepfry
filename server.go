@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 var (
+	real   = flag.Bool("real", false, "no docker mode")
 	dbAddr = flag.String("dbAddr", "fairlady:5432", "postgres database address")
 	dbName = flag.String("dbName", "addresses", "postgres database name")
 	dbUser = flag.String("dbUser", "rxlx", "postgres database user")
@@ -17,6 +21,7 @@ var (
 )
 
 type Server struct {
+	Stopch   chan struct{}
 	Serverch chan Message
 	Memory   *sync.RWMutex
 	Addr     string
@@ -40,7 +45,11 @@ type Message struct {
 func NewServer(dsn string) *Server {
 	conn, err := pgx.Connect(context.Background(), dsn)
 	if err != nil {
-		panic(err)
+		time.Sleep(5 * time.Second)
+		conn, err = pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			panic(err)
+		}
 	}
 	memory := &sync.RWMutex{}
 	messagech := make(chan Message, 256)
@@ -51,7 +60,9 @@ func NewServer(dsn string) *Server {
 		Memory:   memory,
 		Gateway:  http.NewServeMux(),
 		Intel: Intel{
-			Ip4Addresses: make(map[string][]Ip4),
+			Ip4Addresses:      make(map[string][]Ip4),
+			SavedMd5Values:    make(map[MD5]int),
+			SavedIp4Addresses: make(map[string]Ip4),
 		},
 	}
 	s.Gateway.HandleFunc("/ip4", s.Ip4Handler)
@@ -63,7 +74,7 @@ func NewServer(dsn string) *Server {
 	s.Gateway.HandleFunc("/view", s.Ipv4ViewHandler)
 	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
 	// s.Gateway.HandleFunc("/md5", s.Md5Handler)
-
+	s.Intel.SavedIp4Addresses["127.0.0.1"] = Ip4{Value: "127.0.0.1"}
 	return s
 }
 
@@ -86,12 +97,22 @@ func (s *Server) AddIp4(ip4 Ip4) {
 	// if we want to enforce a maximum length, we could do it here
 }
 
+func DsnFromEnv() string {
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPass := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+	fmt.Println("postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName)
+	return "postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName
+}
+
 var BaseHtml string = `
 <!DOCTYPE html>
 <html>
 
 <head>
-  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' https://localhost:8080">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' *">
   <script src="https://unpkg.com/htmx.org@2.0.4"
     integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
     crossorigin="anonymous"></script>

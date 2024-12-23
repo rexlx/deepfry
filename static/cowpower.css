@@ -9,28 +9,28 @@
 body {
     font-family: 'Intel One Mono', monospace;
     background-color: #040008;
-    color: #4a7887;
+    color: #556c96;
 }
 
 .search-form {
     display: flex;
     margin-bottom: 1rem;
 }
-
+/* 4a7887 */
 .search-form input[type="text"] {
     flex: 1;
     padding: 0.5rem;
-    border: 1px solid #4a7887;
+    border: 1px solid #556c96;
     border-radius: 4px 0 0 4px;
     background-color: #000;
-    color: #4a7887;
+    color: #556c96;
 }
 
 .search-form button {
     padding: 0.5rem 1rem;
-    border: 1px solid #4a7887;
+    border: 1px solid #556c96;
     border-radius: 0 4px 4px 0;
-    background-color: #4a7887;
+    background-color: #556c96;
     color: #000;
     cursor: pointer;
 }

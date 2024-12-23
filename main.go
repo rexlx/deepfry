@@ -13,17 +13,21 @@ import (
 )
 
 func main() {
-	var c int
+	var dsn string
 	flag.Parse()
-	dsn := "postgres://" + *dbUser + ":" + *dbPass + "@" + *dbAddr + "/" + *dbName
+	if *real {
+		dsn = "postgres://" + *dbUser + ":" + *dbPass + "@" + *dbAddr + "/" + *dbName
+	} else {
+		dsn = DsnFromEnv()
+	}
 	s := NewServer(dsn)
 	defer s.DB.Close(context.Background())
 
 	s.Intel.SavedIp4Addresses = s.GetIP4s()
 	for v, ip4 := range s.Intel.SavedIp4Addresses {
-		c++
-		val := fmt.Sprintf("%v %v", c, ip4.Value)
-		LocalCache.IPs = append(LocalCache.IPs, val)
+		// c++
+		// val := fmt.Sprintf("%v %v", c, ip4.Value)
+		LocalCache.IPs = append(LocalCache.IPs, ip4.Value)
 		fmt.Printf("%v ", v)
 	}
 	fmt.Println("\nloaded ips")
@@ -47,7 +51,9 @@ func main() {
 				s.Memory.Unlock()
 			case <-sigs:
 				ticker.Stop()
-
+				os.Exit(0)
+			case <-s.Stopch:
+				ticker.Stop()
 				os.Exit(0)
 			}
 		}

@@ -46,6 +46,10 @@ func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
 	}
 	insertQuery := fmt.Sprintf("INSERT INTO %s (value) VALUES ", tableName)
 	// s.Memory.Lock()
+	if s.Intel.SavedIp4Addresses == nil {
+		fmt.Println("WHT THE FLIP!!!!")
+		s.Intel.SavedIp4Addresses = make(map[string]Ip4)
+	}
 	for i, ip := range ips {
 		s.Intel.SavedIp4Addresses[ip.Value] = ip
 		insertQuery += fmt.Sprintf("('%s')", ip.Value)
