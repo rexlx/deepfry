@@ -171,6 +171,7 @@ func (s *Server) GetIp4Handler(w http.ResponseWriter, r *http.Request) {
 		out, _ := json.Marshal(res)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(out)
+		go s.AddIp4(ip)
 		return
 	}
 	res.Message = "IP4 found"
