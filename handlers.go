@@ -23,6 +23,11 @@ var LocalCache = Cache{
 }
 
 func (s *Server) Ip4Handler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["ip4_handler"]++
+	}()
 	var ip4 Ip4
 	if err := json.NewDecoder(r.Body).Decode(&ip4); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -46,6 +51,11 @@ func (s *Server) Ip4Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) BulkIp4Handler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["bulk_ip4_handler"]++
+	}()
 	var bulkIp4 BulkIp4
 	if err := json.NewDecoder(r.Body).Decode(&bulkIp4); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -71,6 +81,11 @@ func (s *Server) BulkIp4Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Ip4sHandler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["ip4s_handler"]++
+	}()
 	s.Memory.RLock()
 	out, _ := json.Marshal(s.Intel.Ip4Addresses)
 	s.Memory.RUnlock()
@@ -78,12 +93,30 @@ func (s *Server) Ip4sHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+func (s *Server) GetStatsHandler(w http.ResponseWriter, r *http.Request) {
+	s.Memory.RLock()
+	out, _ := json.Marshal(s.Stats)
+	s.Memory.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
 func (s *Server) Ipv4ViewHandler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["visits"]++
+	}()
 	// view := fmt.Sprintf(BaseHtml)
 	fmt.Fprint(w, BaseHtml)
 }
 
 func (s *Server) GetIpsAPIHandler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["get_ips_api_handler"]++
+	}()
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
 	end, _ := strconv.Atoi(r.URL.Query().Get("end"))
@@ -146,7 +179,31 @@ func (s *Server) GetIP4FromFormHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, out)
 }
 
+func (s *Server) DisplayStatsHandler(w http.ResponseWriter, r *http.Request) {
+	statsTable := `<div id="stats" class="stats"><table class="table is-bordered is-striped is-narrow is-hoverable is-fullwidth">
+	<thead>
+		<tr>
+			<th>stat</th>
+			<th>value</th>
+			</tr>
+			</thead>
+			<tbody>`
+	s.Memory.RLock()
+	for key, value := range s.Stats {
+		statsTable += fmt.Sprintf("<tr><td>%v</td><td>%v</td></tr>", key, value)
+	}
+	s.Memory.RUnlock()
+	statsTable += `</tbody></table> </div>`
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, statsTable)
+}
+
 func (s *Server) GetIp4Handler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["ip4_queries"]++
+	}()
 	var ip Ip4
 	if err := json.NewDecoder(r.Body).Decode(&ip); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

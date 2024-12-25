@@ -29,6 +29,13 @@ func (s *Server) SaveIP4(ip Ip4) {
 	}
 }
 
+func (s *Server) TestConnection() {
+	if _, err := s.DB.Exec(context.Background(), "SELECT 1"); err != nil {
+		fmt.Println(err)
+		s.Reconnect()
+	}
+}
+
 func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
 	defer func(t time.Time) {
 		fmt.Println("BulkSaveIp4 took", time.Since(t))

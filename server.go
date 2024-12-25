@@ -21,6 +21,7 @@ var (
 )
 
 type Server struct {
+	Stats    Stats
 	Stopch   chan struct{}
 	Serverch chan Message
 	Memory   *sync.RWMutex
@@ -31,10 +32,19 @@ type Server struct {
 }
 
 type Intel struct {
-	Ip4Addresses      map[string][]Ip4 `json:"ip4_addresses"`
-	Md5Values         []MD5            `json:"md5_values"`
-	SavedMd5Values    map[MD5]int      `json:"saved_md5_values"`
-	SavedIp4Addresses map[string]Ip4   `json:"saved_ip4_addresses"`
+	RuntimeStats      map[string][]float64 `json:"runtime_stats"`
+	Ip4Addresses      map[string][]Ip4     `json:"ip4_addresses"`
+	Md5Values         []MD5                `json:"md5_values"`
+	SavedMd5Values    map[MD5]int          `json:"saved_md5_values"`
+	SavedIp4Addresses map[string]Ip4       `json:"saved_ip4_addresses"`
+}
+
+func NewIntel() Intel {
+	return Intel{
+		Ip4Addresses:      make(map[string][]Ip4),
+		SavedMd5Values:    make(map[MD5]int),
+		SavedIp4Addresses: make(map[string]Ip4),
+	}
 }
 
 type Message struct {
@@ -54,27 +64,25 @@ func NewServer(dsn string) *Server {
 	memory := &sync.RWMutex{}
 	messagech := make(chan Message, 256)
 	s := &Server{
+		Stats:    make(Stats),
 		Serverch: messagech,
 		Addr:     ":8080",
 		DB:       conn,
 		Memory:   memory,
 		Gateway:  http.NewServeMux(),
-		Intel: Intel{
-			Ip4Addresses:      make(map[string][]Ip4),
-			SavedMd5Values:    make(map[MD5]int),
-			SavedIp4Addresses: make(map[string]Ip4),
-		},
+		Intel:    NewIntel(),
 	}
 	s.Gateway.HandleFunc("/ip4", s.Ip4Handler)
+	s.Gateway.HandleFunc("/displaystats", s.DisplayStatsHandler)
 	s.Gateway.HandleFunc("/bulk/ip4", s.BulkIp4Handler)
-	s.Gateway.HandleFunc("/get/ip4", s.GetIp4Handler) //
+	s.Gateway.HandleFunc("/get/ip4", s.GetIp4Handler)
 	s.Gateway.HandleFunc("/cache/ips", s.CachedIp4Handler)
 	s.Gateway.HandleFunc("/api/ip4", s.GetIP4FromFormHandler)
 	s.Gateway.HandleFunc("/api/ips", s.GetIpsAPIHandler)
 	s.Gateway.HandleFunc("/view", s.Ipv4ViewHandler)
+	s.Gateway.HandleFunc("/stats", s.GetStatsHandler)
 	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
-	// s.Gateway.HandleFunc("/md5", s.Md5Handler)
-	s.Intel.SavedIp4Addresses["127.0.0.1"] = Ip4{Value: "127.0.0.1"}
+	s.Stats["server_started"] = int(time.Now().Unix())
 	return s
 }
 
@@ -97,6 +105,19 @@ func (s *Server) AddIp4(ip4 Ip4) {
 	// if we want to enforce a maximum length, we could do it here
 }
 
+func (s *Server) Reconnect() {
+	s.DB.Close(context.Background())
+	conn, err := pgx.Connect(context.Background(), DsnFromEnv())
+	if err != nil {
+		time.Sleep(5 * time.Second)
+		conn, err = pgx.Connect(context.Background(), DsnFromEnv())
+		if err != nil {
+			panic(err)
+		}
+	}
+	s.DB = conn
+}
+
 func DsnFromEnv() string {
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
@@ -105,6 +126,27 @@ func DsnFromEnv() string {
 	dbName := os.Getenv("DB_NAME")
 	fmt.Println("postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName)
 	return "postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName
+}
+
+type Stats map[string]int
+
+func (s Stats) DeleteStats(key string) {
+	delete(s, key)
+}
+
+func (i *Intel) SetRuntimeStats(stats Stats) {
+	if i.RuntimeStats == nil {
+		i.RuntimeStats = make(map[string][]float64)
+	}
+	for key, value := range stats {
+		if _, ok := i.RuntimeStats[key]; !ok {
+			i.RuntimeStats[key] = []float64{}
+		}
+		if len(i.RuntimeStats[key]) > 100 {
+			i.RuntimeStats[key] = i.RuntimeStats[key][1:]
+		}
+		i.RuntimeStats[key] = append(i.RuntimeStats[key], float64(value))
+	}
 }
 
 var BaseHtml string = `
@@ -116,7 +158,7 @@ var BaseHtml string = `
   <script src="https://unpkg.com/htmx.org@2.0.4"
     integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
     crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="/static/cowpower.css"> 
+  <link rel="stylesheet" href="/static/cowpower.css">
 </head>
 
 <body>
@@ -128,14 +170,19 @@ var BaseHtml string = `
     <h1>ip addresses</h1>
     <ul id="data-list"></ul>
   </div>
-	<div class="search-area">
-      <h1>search</h1>
-      <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form" hx-on::after-request="clearInput()">
-        <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
-        <button type="submit">search</button>
-      </form>
-	  <div id="result" class="results"></div>
-    </div>
+  <div class="search-area">
+    <h1>search</h1>
+    <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form"
+      hx-on::after-request="clearInput()">
+      <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
+      <button type="submit">search</button>
+    </form>
+    <div id="result" class="results"></div>
+  </div>
+  <div class="search-area" hx-get="/displaystats" hx-trigger="load" hx-target="#stats" hx-swap="outerHTML">
+    <h1>stats</h1>
+    <div id="stats" class="stats"></div>
+  </div>
 
   <script src="/static/f.js"></script>
 

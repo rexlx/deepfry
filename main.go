@@ -38,16 +38,19 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
+				s.TestConnection()
 				if len(s.Intel.Ip4Addresses) == 0 {
-					fmt.Println("No IP4s to save", len(s.Intel.SavedIp4Addresses))
+					// fmt.Println("No IP4s to save", len(s.Intel.SavedIp4Addresses))
 					continue
 				}
 				fmt.Println("Saving IP4s")
 				s.Memory.Lock()
 				for octect, ips := range s.Intel.Ip4Addresses {
+					s.Stats["BulkSaveIp4"]++
 					s.BulkSaveIp4(octect, ips)
 					delete(s.Intel.Ip4Addresses, octect)
 				}
+				s.Intel.SetRuntimeStats(s.Stats)
 				s.Memory.Unlock()
 			case <-sigs:
 				ticker.Stop()
