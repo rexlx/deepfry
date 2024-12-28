@@ -39,6 +39,9 @@ func (s *Server) Ip4Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go s.AddIp4(ip4)
+	LocalCache.Memory.Lock()
+	LocalCache.IPs = append(LocalCache.IPs, ip4.Value)
+	LocalCache.Memory.Unlock()
 	// fmt.Println("Added IP4", ip4)
 	res := struct {
 		Message string `json:"message"`
@@ -162,7 +165,9 @@ func (s *Server) CachedIp4Handler(w http.ResponseWriter, r *http.Request) {
 	if end > len(LocalCache.IPs) {
 		end = len(LocalCache.IPs)
 	}
-	out, _ := json.Marshal(LocalCache.IPs[start:end])
+	x := LocalCache.IPs[start:end]
+	// fmt.Println("CachedIp4Handler", x)
+	out, _ := json.Marshal(x)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(out)
 }
@@ -233,6 +238,7 @@ func (s *Server) RequestedURLHandler(w http.ResponseWriter, r *http.Request) {
 		ID:      req.ID,
 	}
 	s.Memory.Lock()
+	s.Intel.Stats.Reset()
 	s.Intel.Stats[req.Value]++
 	if s.Intel.Stats[req.Value] > 1 {
 		res.Message = "not novel"

@@ -64,10 +64,13 @@ func (s *Server) TestConnection() {
 // }
 
 func (s *Server) SaveStats() {
-	s.Memory.RLock()
+	s.Memory.Lock()
+	defer s.Memory.Unlock()
 	stats := s.Intel.Stats
-	s.Memory.RUnlock()
-
+	ok := stats.IsSaved()
+	if ok {
+		return
+	}
 	// Construct the SQL statement with placeholders
 	var sb strings.Builder
 	sb.WriteString("INSERT INTO access (key, value) VALUES ")
@@ -83,13 +86,11 @@ func (s *Server) SaveStats() {
 
 	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
 
-	s.Memory.Lock()
-	defer s.Memory.Unlock() // Ensure unlock even if error occurs
-
 	if _, err := s.DB.Exec(context.Background(), sb.String(), args...); err != nil {
 		fmt.Println(err)
 		return
 	}
+	stats.Save() // Mark as saved
 }
 
 // Helper function to get map keys in a consistent order

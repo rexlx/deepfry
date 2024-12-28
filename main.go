@@ -25,11 +25,11 @@ func main() {
 
 	s.Intel.SavedIp4Addresses = s.GetIP4s()
 	s.Intel.Stats = s.GetStats()
-	// for v, ip4 := range s.Intel.SavedIp4Addresses {
-	// 	LocalCache.IPs = append(LocalCache.IPs, ip4.Value)
-	// 	fmt.Printf("%v ", v)
-	// }
-	fmt.Println("\nloaded")
+	for _, ip4 := range s.Intel.SavedIp4Addresses {
+		LocalCache.IPs = append(LocalCache.IPs, ip4.Value)
+		// fmt.Printf("%v ", v)
+	}
+	fmt.Println("\nloaded", len(s.Intel.SavedIp4Addresses), "ip4s")
 	ticker := time.NewTicker(20 * time.Second)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)

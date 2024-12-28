@@ -138,6 +138,23 @@ func (s Stats) DeleteStats(key string) {
 	delete(s, key)
 }
 
+func (s Stats) IsSaved() bool {
+	_, saved := s["saved"]
+	return saved
+}
+
+func (s Stats) Save() {
+	s["saved"] = 1
+}
+
+func (s Stats) Reset() {
+	fmt.Println("got new stats, resetting")
+	_, saved := s["saved"]
+	if saved {
+		delete(s, "saved")
+	}
+}
+
 func (i *Intel) SetRuntimeStats(stats Stats) {
 	if i.RuntimeStats == nil {
 		i.RuntimeStats = make(map[string][]float64)
