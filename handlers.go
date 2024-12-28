@@ -80,6 +80,14 @@ func (s *Server) BulkIp4Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+func (s *Server) GetUrlStatsHandler(w http.ResponseWriter, r *http.Request) {
+	s.Memory.RLock()
+	out, _ := json.Marshal(s.Intel.Stats)
+	s.Memory.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
 func (s *Server) Ip4sHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		s.Memory.Lock()
@@ -196,6 +204,46 @@ func (s *Server) DisplayStatsHandler(w http.ResponseWriter, r *http.Request) {
 	statsTable += `</tbody></table> </div>`
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprint(w, statsTable)
+}
+
+type RequestedURl struct {
+	ID    int    `json:"id"`
+	Saved bool   `json:"saved"`
+	Value string `json:"value"`
+}
+
+func (s *Server) RequestedURLHandler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		s.Memory.Lock()
+		defer s.Memory.Unlock()
+		s.Stats["requested_url_handler"]++
+	}()
+	var req RequestedURl
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := struct {
+		Message string `json:"message"`
+		Error   bool   `json:"error"`
+		ID      int    `json:"id"`
+	}{
+		Message: "",
+		Error:   false,
+		ID:      req.ID,
+	}
+	s.Memory.Lock()
+	s.Intel.Stats[req.Value]++
+	if s.Intel.Stats[req.Value] > 1 {
+		res.Message = "not novel"
+	} else {
+		res.Message = "novel"
+		res.Error = true
+	}
+	s.Memory.Unlock()
+	out, _ := json.Marshal(res)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
 }
 
 func (s *Server) GetIp4Handler(w http.ResponseWriter, r *http.Request) {

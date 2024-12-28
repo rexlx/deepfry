@@ -32,6 +32,7 @@ type Server struct {
 }
 
 type Intel struct {
+	Stats             Stats                `json:"stats"`
 	RuntimeStats      map[string][]float64 `json:"runtime_stats"`
 	Ip4Addresses      map[string][]Ip4     `json:"ip4_addresses"`
 	Md5Values         []MD5                `json:"md5_values"`
@@ -41,6 +42,7 @@ type Intel struct {
 
 func NewIntel() Intel {
 	return Intel{
+		Stats:             make(Stats),
 		Ip4Addresses:      make(map[string][]Ip4),
 		SavedMd5Values:    make(map[MD5]int),
 		SavedIp4Addresses: make(map[string]Ip4),
@@ -81,6 +83,8 @@ func NewServer(dsn string) *Server {
 	s.Gateway.HandleFunc("/api/ips", s.GetIpsAPIHandler)
 	s.Gateway.HandleFunc("/view", s.Ipv4ViewHandler)
 	s.Gateway.HandleFunc("/stats", s.GetStatsHandler)
+	s.Gateway.HandleFunc("/urlstats", s.GetUrlStatsHandler)
+	s.Gateway.HandleFunc("/urls", s.RequestedURLHandler)
 	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
 	s.Stats["server_started"] = int(time.Now().Unix())
 	return s

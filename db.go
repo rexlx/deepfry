@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,106 @@ func (s *Server) TestConnection() {
 		fmt.Println(err)
 		s.Reconnect()
 	}
+}
+
+// func (s *Server) SaveStats() {
+// 	s.Memory.RLock()
+// 	stats := s.Intel.Stats
+// 	s.Memory.RUnlock()
+// 	var sb strings.Builder
+// 	sb.WriteString("INSERT INTO access (key, value) VALUES ")
+// 	args := make([]interface{}, 0, len(stats)*2)
+// 	i := 1
+// 	for key, value := range stats {
+// 		if i < 1 {
+// 			sb.WriteString(", ")
+// 		}
+// 		sb.WriteString(fmt.Sprintf("($%d, $%d)", i, i+1))
+// 		args = append(args, key, value)
+// 		i += 2
+// 	}
+// 	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+// 	s.Memory.Lock()
+// 	if _, err := s.DB.Exec(context.Background(), sb.String(), args...); err != nil {
+// 		fmt.Println(err)
+// 		return
+// 	}
+// 	s.Memory.Unlock()
+// }
+
+func (s *Server) SaveStats() {
+	s.Memory.RLock()
+	stats := s.Intel.Stats
+	s.Memory.RUnlock()
+
+	// Construct the SQL statement with placeholders
+	var sb strings.Builder
+	sb.WriteString("INSERT INTO access (key, value) VALUES ")
+	args := make([]interface{}, 0, len(stats)*2)
+
+	for i, key := range keys(stats) { // Use a helper function to get ordered keys
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
+		args = append(args, key, stats[key])
+	}
+
+	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+
+	s.Memory.Lock()
+	defer s.Memory.Unlock() // Ensure unlock even if error occurs
+
+	if _, err := s.DB.Exec(context.Background(), sb.String(), args...); err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+// Helper function to get map keys in a consistent order
+func keys(m Stats) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // Sort for consistent ordering
+	return keys
+}
+
+func (s *Server) GetStats() map[string]int {
+	createTableQuery := fmt.Sprintf(`
+	CREATE TABLE IF NOT EXISTS %s (
+		id SERIAL PRIMARY KEY,
+		key VARCHAR(255) NOT NULL UNIQUE, -- Added UNIQUE constraint
+		value INT NOT NULL
+	)
+`, "access")
+	if _, err := s.DB.Exec(context.Background(), createTableQuery); err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	selectQuery := "SELECT key, value FROM access"
+	rows, err := s.DB.Query(context.Background(), selectQuery)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	stats := make(map[string]int)
+	for rows.Next() {
+		var key string
+		var value int
+		if err := rows.Scan(&key, &value); err != nil {
+			fmt.Println(err)
+			return nil
+		}
+		stats[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	fmt.Println(stats)
+	return stats
 }
 
 func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
