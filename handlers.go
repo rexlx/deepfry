@@ -83,10 +83,47 @@ func (s *Server) BulkIp4Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+func (s *Server) TopTenRequestHandler(w http.ResponseWriter, r *http.Request) {
+	out := `<div id="urls" class="urls"><table class="table is-bordered is-striped is-narrow is-hoverable is-fullwidth">
+	<thead>
+		<tr>
+			<th>url</th>
+			<th>count</th>
+			</tr>
+			</thead>
+			<tbody>`
+
+	s.Memory.RLock()
+	orderedStats := SortStatsMax(s.Intel.Stats)
+	s.Memory.RUnlock()
+	var topTen []Stat
+	if len(orderedStats) > 10 {
+		topTen = orderedStats[:10]
+	} else {
+		topTen = orderedStats
+	}
+	for _, item := range topTen {
+		out += fmt.Sprintf("<tr><td>%v</td><td>%v</td></tr>", item.Key, item.Value)
+	}
+	out += `</tbody></table> </div>`
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, out)
+}
+
 func (s *Server) GetUrlStatsHandler(w http.ResponseWriter, r *http.Request) {
 	s.Memory.RLock()
 	out, _ := json.Marshal(s.Intel.Stats)
 	s.Memory.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
+func (s *Server) GetSortedStatsHandler(w http.ResponseWriter, r *http.Request) {
+	s.Memory.RLock()
+	stats := s.Intel.Stats
+	orderedStats := SortStatsMax(stats)
+	s.Memory.RUnlock()
+	out, _ := json.Marshal(orderedStats)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(out)
 }

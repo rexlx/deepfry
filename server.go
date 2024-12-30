@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -84,6 +85,8 @@ func NewServer(dsn string) *Server {
 	s.Gateway.HandleFunc("/view", s.Ipv4ViewHandler)
 	s.Gateway.HandleFunc("/stats", s.GetStatsHandler)
 	s.Gateway.HandleFunc("/urlstats", s.GetUrlStatsHandler)
+	s.Gateway.HandleFunc("/toprequests", s.TopTenRequestHandler)
+	s.Gateway.HandleFunc("/sortedurlstats", s.GetSortedStatsHandler)
 	s.Gateway.HandleFunc("/urls", s.RequestedURLHandler)
 	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
 	s.Stats["server_started"] = int(time.Now().Unix())
@@ -133,6 +136,11 @@ func DsnFromEnv() string {
 }
 
 type Stats map[string]int
+type OrderedStats []Stat
+type Stat struct {
+	Key   string `json:"key"`
+	Value int    `json:"value"`
+}
 
 func (s Stats) DeleteStats(key string) {
 	delete(s, key)
@@ -155,6 +163,14 @@ func (s Stats) Reset() {
 	}
 }
 
+func (s Stats) ToSlice() []Stat {
+	var stats []Stat
+	for key, value := range s {
+		stats = append(stats, Stat{Key: key, Value: value})
+	}
+	return stats
+}
+
 func (i *Intel) SetRuntimeStats(stats Stats) {
 	if i.RuntimeStats == nil {
 		i.RuntimeStats = make(map[string][]float64)
@@ -168,6 +184,15 @@ func (i *Intel) SetRuntimeStats(stats Stats) {
 		}
 		i.RuntimeStats[key] = append(i.RuntimeStats[key], float64(value))
 	}
+}
+
+func SortStatsMax(stats Stats) OrderedStats {
+	ordered := stats.ToSlice()
+	// ordered := make(OrderedStats, len(unordered))
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].Value > ordered[j].Value
+	})
+	return ordered
 }
 
 var BaseHtml string = `
@@ -200,6 +225,10 @@ var BaseHtml string = `
     </form>
     <div id="result" class="results"></div>
   </div>
+  <div class="search-area" hx-get="/toprequests" hx-trigger="load" hx-target="#urls" hx-swap="outerHTML">
+    <h1>top requests</h1>
+	<div id="urls" class="urls"></div>
+	</div>
   <div class="search-area" hx-get="/displaystats" hx-trigger="load" hx-target="#stats" hx-swap="outerHTML">
     <h1>stats</h1>
     <div id="stats" class="stats"></div>
