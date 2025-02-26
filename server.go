@@ -188,7 +188,6 @@ func (i *Intel) SetRuntimeStats(stats Stats) {
 
 func SortStatsMax(stats Stats) OrderedStats {
 	ordered := stats.ToSlice()
-	// ordered := make(OrderedStats, len(unordered))
 	sort.Slice(ordered, func(i, j int) bool {
 		return ordered[i].Value > ordered[j].Value
 	})

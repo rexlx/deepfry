@@ -160,14 +160,17 @@ func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
 		fmt.Println("WHT THE FLIP!!!!")
 		s.Intel.SavedIp4Addresses = make(map[string]Ip4)
 	}
+	values := ""
 	for i, ip := range ips {
 		s.Intel.SavedIp4Addresses[ip.Value] = ip
 		insertQuery += fmt.Sprintf("('%s')", ip.Value)
 		if i != len(ips)-1 {
-			insertQuery += ", "
+			// insertQuery += ", "
+			values += ", "
 		}
 	}
 	// s.Memory.Unlock()
+	insertQuery += values
 	insertQuery += " ON CONFLICT (value) DO NOTHING"
 	if _, err := s.DB.Exec(context.Background(), insertQuery); err != nil {
 		fmt.Println(err)
