@@ -80,8 +80,12 @@ func (s *Server) SaveStats() {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
+		truncatedKey := key
+		if len(key) > 254 {
+			truncatedKey = key[:254]
+		}
 		sb.WriteString(fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
-		args = append(args, key, stats[key])
+		args = append(args, truncatedKey, stats[key])
 	}
 
 	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
