@@ -21,47 +21,22 @@ func (s *Server) SaveIP4(ip Ip4) {
 			)
 		`, tableName)
 	if _, err := s.DB.Exec(context.Background(), createTableQuery); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return
 	}
 	insertQuery := fmt.Sprintf("INSERT INTO %s (value) VALUES ($1)", tableName)
 	if _, err := s.DB.Exec(context.Background(), insertQuery, ip.Value); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return
 	}
 }
 
 func (s *Server) TestConnection() {
 	if _, err := s.DB.Exec(context.Background(), "SELECT 1"); err != nil {
-		fmt.Println(err)
-		s.Reconnect()
+		fmt.Println(err, "error")
+		return
 	}
 }
-
-// func (s *Server) SaveStats() {
-// 	s.Memory.RLock()
-// 	stats := s.Intel.Stats
-// 	s.Memory.RUnlock()
-// 	var sb strings.Builder
-// 	sb.WriteString("INSERT INTO access (key, value) VALUES ")
-// 	args := make([]interface{}, 0, len(stats)*2)
-// 	i := 1
-// 	for key, value := range stats {
-// 		if i < 1 {
-// 			sb.WriteString(", ")
-// 		}
-// 		sb.WriteString(fmt.Sprintf("($%d, $%d)", i, i+1))
-// 		args = append(args, key, value)
-// 		i += 2
-// 	}
-// 	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-// 	s.Memory.Lock()
-// 	if _, err := s.DB.Exec(context.Background(), sb.String(), args...); err != nil {
-// 		fmt.Println(err)
-// 		return
-// 	}
-// 	s.Memory.Unlock()
-// }
 
 func (s *Server) SaveStats() {
 	s.Memory.Lock()
@@ -71,12 +46,13 @@ func (s *Server) SaveStats() {
 	if ok {
 		return
 	}
-	// Construct the SQL statement with placeholders
 	var sb strings.Builder
 	sb.WriteString("INSERT INTO access (key, value) VALUES ")
 	args := make([]interface{}, 0, len(stats)*2)
-
-	for i, key := range keys(stats) { // Use a helper function to get ordered keys
+	if len(stats) == 0 {
+		return
+	}
+	for i, key := range keys(stats) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
@@ -91,19 +67,19 @@ func (s *Server) SaveStats() {
 	sb.WriteString(" ON CONFLICT (key) DO UPDATE SET value = excluded.value")
 
 	if _, err := s.DB.Exec(context.Background(), sb.String(), args...); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return
 	}
-	stats.Save() // Mark as saved
+	stats.Save()
+	s.Intel.Stats = make(Stats, 0)
 }
 
-// Helper function to get map keys in a consistent order
 func keys(m Stats) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys) // Sort for consistent ordering
+	sort.Strings(keys)
 	return keys
 }
 
@@ -116,13 +92,13 @@ func (s *Server) GetStats() map[string]int {
 	)
 `, "access")
 	if _, err := s.DB.Exec(context.Background(), createTableQuery); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return nil
 	}
 	selectQuery := "SELECT key, value FROM access"
 	rows, err := s.DB.Query(context.Background(), selectQuery)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return nil
 	}
 	stats := make(map[string]int)
@@ -130,20 +106,19 @@ func (s *Server) GetStats() map[string]int {
 		var key string
 		var value int
 		if err := rows.Scan(&key, &value); err != nil {
-			fmt.Println(err)
+			fmt.Println(err, "error")
 			return nil
 		}
 		stats[key] = value
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return nil
 	}
-	fmt.Println(stats)
 	return stats
 }
 
-func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
+func (s *Server) BulkSaveIp42(octect string, ips []Ip4) {
 	defer func(t time.Time) {
 		fmt.Println("BulkSaveIp4 took", time.Since(t))
 	}(time.Now())
@@ -155,13 +130,11 @@ func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
 			)
 		`, tableName)
 	if _, err := s.DB.Exec(context.Background(), createTableQuery); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return
 	}
 	insertQuery := fmt.Sprintf("INSERT INTO %s (value) VALUES ", tableName)
-	// s.Memory.Lock()
 	if s.Intel.SavedIp4Addresses == nil {
-		fmt.Println("WHT THE FLIP!!!!")
 		s.Intel.SavedIp4Addresses = make(map[string]Ip4)
 	}
 	values := ""
@@ -169,15 +142,14 @@ func (s *Server) BulkSaveIp4(octect string, ips []Ip4) {
 		s.Intel.SavedIp4Addresses[ip.Value] = ip
 		insertQuery += fmt.Sprintf("('%s')", ip.Value)
 		if i != len(ips)-1 {
-			// insertQuery += ", "
 			values += ", "
 		}
 	}
-	// s.Memory.Unlock()
 	insertQuery += values
 	insertQuery += " ON CONFLICT (value) DO NOTHING"
+	fmt.Println("Executing query:", insertQuery, tableName)
 	if _, err := s.DB.Exec(context.Background(), insertQuery); err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "error")
 		return
 	}
 }
@@ -192,19 +164,19 @@ func (s *Server) GetIP4s() map[string]Ip4 {
 		selectQuery := fmt.Sprintf("SELECT id, value FROM %s", tableName)
 		rows, err := s.DB.Query(context.Background(), selectQuery)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(err, "error")
 			return nil
 		}
 		for rows.Next() {
 			var ip Ip4
 			if err := rows.Scan(&ip.ID, &ip.Value); err != nil {
-				fmt.Println(err)
+				fmt.Println(err, "error")
 				return nil
 			}
 			ips[ip.Value] = ip
 		}
 		if err := rows.Err(); err != nil {
-			fmt.Println(err)
+			fmt.Println(err, "error")
 			return nil
 		}
 	}

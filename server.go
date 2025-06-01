@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -28,7 +28,7 @@ type Server struct {
 	Memory   *sync.RWMutex
 	Addr     string
 	Gateway  *http.ServeMux
-	DB       *pgx.Conn
+	DB       *pgxpool.Pool
 	Intel    Intel
 }
 
@@ -47,6 +47,7 @@ func NewIntel() Intel {
 		Ip4Addresses:      make(map[string][]Ip4),
 		SavedMd5Values:    make(map[MD5]int),
 		SavedIp4Addresses: make(map[string]Ip4),
+		RuntimeStats:      make(map[string][]float64),
 	}
 }
 
@@ -56,25 +57,57 @@ type Message struct {
 }
 
 func NewServer(dsn string) *Server {
-	conn, err := pgx.Connect(context.Background(), dsn)
+	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		time.Sleep(5 * time.Second)
-		conn, err = pgx.Connect(context.Background(), dsn)
-		if err != nil {
-			panic(err)
+		panic(fmt.Sprintf("Unable to parse DSN: %v\n", err))
+	}
+
+	var pool *pgxpool.Pool
+	maxRetries := 5
+	retryDelay := 5 * time.Second
+	for i := 0; i < maxRetries; i++ {
+		pool, err = pgxpool.NewWithConfig(context.Background(), config)
+		if err == nil {
+			conn, connErr := pool.Acquire(context.Background())
+			if connErr == nil {
+				pingErr := conn.Ping(context.Background())
+				conn.Release()
+				if pingErr == nil {
+					fmt.Println("Successfully connected to PostgreSQL pool.")
+					break
+				}
+				fmt.Printf("Ping failed after connecting to pool: %v\n", pingErr)
+				err = pingErr
+			} else {
+				fmt.Printf("Failed to acquire connection from pool for initial check: %v\n", connErr)
+				err = connErr
+			}
+		}
+		if i < maxRetries-1 {
+			fmt.Printf("Failed to connect to database (attempt %d/%d): %v. Retrying in %v...\n", i+1, maxRetries, err, retryDelay)
+			time.Sleep(retryDelay)
 		}
 	}
+
+	if err != nil {
+		panic(fmt.Sprintf("Unable to connect to database after %d retries: %v\n", maxRetries, err))
+	}
+
 	memory := &sync.RWMutex{}
 	messagech := make(chan Message, 256)
+	stopch := make(chan struct{})
+
 	s := &Server{
 		Stats:    make(Stats),
 		Serverch: messagech,
+		Stopch:   stopch,
 		Addr:     ":8080",
-		DB:       conn,
+		DB:       pool,
 		Memory:   memory,
 		Gateway:  http.NewServeMux(),
 		Intel:    NewIntel(),
 	}
+
 	s.Gateway.HandleFunc("/ip4", s.Ip4Handler)
 	s.Gateway.HandleFunc("/displaystats", s.DisplayStatsHandler)
 	s.Gateway.HandleFunc("/bulk/ip4", s.BulkIp4Handler)
@@ -89,6 +122,7 @@ func NewServer(dsn string) *Server {
 	s.Gateway.HandleFunc("/sortedurlstats", s.GetSortedStatsHandler)
 	s.Gateway.HandleFunc("/urls", s.RequestedURLHandler)
 	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
+
 	s.Stats["server_started"] = int(time.Now().Unix())
 	return s
 }
@@ -98,31 +132,27 @@ func (s *Server) FileServer() http.Handler {
 }
 
 func (s *Server) AddIp4(ip4 Ip4) {
-	firstOctect := string(ip4.Value[:1])
+	if !ip4.IsValid() {
+		fmt.Printf("[AddIp4] Invalid IP format: %s\n", ip4.Value)
+		return
+	}
+	if len(ip4.Value) == 0 {
+		return
+	}
+
+	firstOctect := string(ip4.Value[0])
 	if firstOctect == "0" || firstOctect == "127" {
 		return
 	}
+
 	s.Memory.Lock()
 	defer s.Memory.Unlock()
-	_, ok := s.Intel.Ip4Addresses[firstOctect]
-	if !ok {
+
+	if _, ok := s.Intel.Ip4Addresses[firstOctect]; !ok {
 		s.Intel.Ip4Addresses[firstOctect] = []Ip4{}
 	}
 	s.Intel.Ip4Addresses[firstOctect] = append(s.Intel.Ip4Addresses[firstOctect], ip4)
-	// if we want to enforce a maximum length, we could do it here
-}
 
-func (s *Server) Reconnect() {
-	s.DB.Close(context.Background())
-	conn, err := pgx.Connect(context.Background(), DsnFromEnv())
-	if err != nil {
-		time.Sleep(5 * time.Second)
-		conn, err = pgx.Connect(context.Background(), DsnFromEnv())
-		if err != nil {
-			panic(err)
-		}
-	}
-	s.DB = conn
 }
 
 func DsnFromEnv() string {
@@ -131,8 +161,25 @@ func DsnFromEnv() string {
 	dbUser := os.Getenv("DB_USER")
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
-	fmt.Println("postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName)
-	return "postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName
+	if dbHost == "" || dbPort == "" || dbUser == "" || dbName == "" {
+		fmt.Println("Warning: One or more DB environment variables (DB_HOST, DB_PORT, DB_USER, DB_NAME) are not set.")
+
+		if dbHost == "" {
+			panic("DB_HOST not set")
+		}
+		if dbPort == "" {
+			panic("DB_PORT not set")
+		}
+		if dbUser == "" {
+			panic("DB_USER not set")
+		}
+		if dbName == "" {
+			panic("DB_NAME not set")
+		}
+
+	}
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
+	return dsn
 }
 
 type Stats map[string]int
@@ -142,47 +189,51 @@ type Stat struct {
 	Value int    `json:"value"`
 }
 
-func (s Stats) DeleteStats(key string) {
-	delete(s, key)
+func (st Stats) DeleteStats(key string) {
+	delete(st, key)
 }
 
-func (s Stats) IsSaved() bool {
-	_, saved := s["saved"]
+func (st Stats) IsSaved() bool {
+	_, saved := st["saved"]
 	return saved
 }
 
-func (s Stats) Save() {
-	s["saved"] = 1
+func (st Stats) Save() {
+	st["saved"] = 1
 }
 
-func (s Stats) Reset() {
-	fmt.Println("got new stats, resetting")
-	_, saved := s["saved"]
-	if saved {
-		delete(s, "saved")
-	}
+func (st Stats) Reset() {
+	delete(st, "saved")
 }
 
-func (s Stats) ToSlice() []Stat {
-	var stats []Stat
-	for key, value := range s {
-		stats = append(stats, Stat{Key: key, Value: value})
+func (st Stats) ToSlice() []Stat {
+	var statsSlice []Stat
+	for key, value := range st {
+		statsSlice = append(statsSlice, Stat{Key: key, Value: value})
 	}
-	return stats
+	return statsSlice
 }
 
 func (i *Intel) SetRuntimeStats(stats Stats) {
 	if i.RuntimeStats == nil {
 		i.RuntimeStats = make(map[string][]float64)
 	}
+	currentTime := float64(time.Now().Unix())
+
 	for key, value := range stats {
-		if _, ok := i.RuntimeStats[key]; !ok {
-			i.RuntimeStats[key] = []float64{}
+
+		if key == "BulkSaveIp4_calls" {
+			if _, ok := i.RuntimeStats[key]; !ok {
+				i.RuntimeStats[key] = []float64{}
+			}
+
+			i.RuntimeStats[key] = append(i.RuntimeStats[key], currentTime, float64(value))
+
+			maxHistory := 200
+			if len(i.RuntimeStats[key]) > maxHistory {
+				i.RuntimeStats[key] = i.RuntimeStats[key][len(i.RuntimeStats[key])-maxHistory:]
+			}
 		}
-		if len(i.RuntimeStats[key]) > 100 {
-			i.RuntimeStats[key] = i.RuntimeStats[key][1:]
-		}
-		i.RuntimeStats[key] = append(i.RuntimeStats[key], float64(value))
 	}
 }
 

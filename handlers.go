@@ -24,6 +24,7 @@ var LocalCache = Cache{
 
 func (s *Server) Ip4Handler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
+		// fmt.Println("Ip4Handler Locking memory")
 		s.Memory.Lock()
 		defer s.Memory.Unlock()
 		s.Stats["ip4_handler"]++
@@ -55,6 +56,7 @@ func (s *Server) Ip4Handler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) BulkIp4Handler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
+		// fmt.Println("BulkIp4Handler auto-locking memory")
 		s.Memory.Lock()
 		defer s.Memory.Unlock()
 		s.Stats["bulk_ip4_handler"]++
@@ -173,7 +175,7 @@ func (s *Server) GetIpsAPIHandler(w http.ResponseWriter, r *http.Request) {
 		end = 100
 	}
 
-	fmt.Println("CachedIp4Handler start", start, end)
+	// fmt.Println("CachedIp4Handler start", start, end)
 	LocalCache.Memory.RLock()
 	defer LocalCache.Memory.RUnlock()
 	if end > len(LocalCache.IPs) {
@@ -196,7 +198,7 @@ func (s *Server) CachedIp4Handler(w http.ResponseWriter, r *http.Request) {
 	if start < 0 {
 		start = 0
 	}
-	fmt.Println("CachedIp4Handler start", start, end)
+	// fmt.Println("CachedIp4Handler start", start, end)
 	LocalCache.Memory.RLock()
 	defer LocalCache.Memory.RUnlock()
 	if end > len(LocalCache.IPs) {
