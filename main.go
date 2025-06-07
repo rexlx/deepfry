@@ -34,6 +34,7 @@ func main() {
 		Gateway: http.NewServeMux(),
 	}
 	server.Gateway.HandleFunc("/search", server.HandleFindMatchByValue)
+	server.Gateway.HandleFunc("/parse", server.ParserHandler)
 	fmt.Println("Server is running on port 8080")
 	if err := http.ListenAndServe(":8080", server.Gateway); err != nil {
 		server.Logger.Fatalf("failed to start server: %v", err)
