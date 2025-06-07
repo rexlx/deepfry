@@ -6,58 +6,37 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rexlx/parser"
 )
 
 func main() {
-	var dsn string
 	flag.Parse()
-	if *real {
-		dsn = "postgres://" + *dbUser + ":" + *dbPass + "@" + *dbAddr + "/" + *dbName
-	} else {
-		dsn = DsnFromEnv()
+	myLog := log.New(log.Writer(), "server: ", log.LstdFlags|log.Lshortfile)
+	myDBConf, err := pgxpool.ParseConfig(*conn)
+	if err != nil {
+		myLog.Fatalf("failed to parse database config: %v", err)
 	}
-	s := NewServer(dsn)
-	defer s.DB.Close(context.Background())
+	var pool *pgxpool.Pool
+	pool, err = pgxpool.NewWithConfig(context.Background(), myDBConf)
+	if err != nil {
+		myLog.Fatalf("failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+	server := &Server{
+		ID:      "server1",
+		Logger:  myLog,
+		Parser:  parser.NewContextualizer(&parser.PrivateChecks{Ipv4: true}),
+		DB:      pool,
+		Memory:  &sync.RWMutex{},
+		Gateway: http.NewServeMux(),
+	}
+	server.Gateway.HandleFunc("/search", server.HandleFindMatchByValue)
+	fmt.Println("Server is running on port 8080")
+	if err := http.ListenAndServe(":8080", server.Gateway); err != nil {
+		server.Logger.Fatalf("failed to start server: %v", err)
+	}
 
-	s.Intel.SavedIp4Addresses = s.GetIP4s()
-	s.Intel.Stats = s.GetStats()
-	for _, ip4 := range s.Intel.SavedIp4Addresses {
-		LocalCache.IPs = append(LocalCache.IPs, ip4.Value)
-		// fmt.Printf("%v ", v)
-	}
-	fmt.Println("\nloaded", len(s.Intel.SavedIp4Addresses), "ip4s")
-	ticker := time.NewTicker(20 * time.Second)
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				s.TestConnection()
-				s.Memory.Lock()
-				if len(s.Intel.Ip4Addresses) != 0 {
-					for octect, ips := range s.Intel.Ip4Addresses {
-						s.Stats["BulkSaveIp4"]++
-						s.BulkSaveIp4(octect, ips)
-						delete(s.Intel.Ip4Addresses, octect)
-					}
-				}
-				fmt.Println("Saving IP4s")
-				s.Intel.SetRuntimeStats(s.Stats)
-				s.Memory.Unlock()
-				go s.SaveStats()
-			case <-sigs:
-				ticker.Stop()
-				os.Exit(0)
-			case <-s.Stopch:
-				ticker.Stop()
-				os.Exit(0)
-			}
-		}
-	}()
-	log.Fatal(http.ListenAndServe(s.Addr, s.Gateway))
 }
