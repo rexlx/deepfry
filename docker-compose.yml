@@ -1,33 +1,50 @@
+# docker-compose.yml
+
 version: '3.8'
 
 services:
+  # PostgreSQL Database Service
   db:
-    image: postgres:13
-    container_name: postgres
+    image: postgres:13-alpine
+    container_name: postgres_db
     environment:
+      # These variables are used by the official Postgres image to initialize the database.
+      # They should be set in a .env file in the same directory as this docker-compose.yml
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     volumes:
+      # Persists database data across container restarts
       - postgres_data:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d
     ports:
-      - "5555:5432"  # Map host port 5555 to container port 5432
+      # Exposes the database to your host machine on port 5555 for debugging/connecting with a client.
+      - "5555:5432"
+    # Healthcheck ensures the 'app' service doesn't start until the database is ready for connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
 
+  # Go Application Service
   app:
     build: .
     container_name: go_app
-    environment:
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
     ports:
       - "8080:8080"
+    # The 'app' service will wait for the 'db' service to be healthy before starting.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    # The command overrides the default CMD in the Dockerfile.
+    # It starts the server and passes the '-conn' flag with the full connection string.
+    # Note that we use 'db' as the hostname, which is the service name of our database container.
+    command: >
+      /server -conn "user=${DB_USER} password=${DB_PASSWORD} host=db port=5432 dbname=${DB_NAME}"
+    restart: on-failure
 
 volumes:
+  # Defines the named volume for data persistence.
   postgres_data:
     driver: local

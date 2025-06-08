@@ -2,240 +2,291 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
-	"os"
-	"sort"
+	"regexp"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rexlx/parser"
 )
 
 var (
-	real   = flag.Bool("real", false, "no docker mode")
+	isReal = flag.Bool("isReal", false, "is not docker instance")
+	conn   = flag.String("conn", "fairlady:5432", "postgres database address")
 	dbAddr = flag.String("dbAddr", "fairlady:5432", "postgres database address")
-	dbName = flag.String("dbName", "addresses", "postgres database name")
+	dbName = flag.String("dbName", "deepfry", "postgres database name")
 	dbUser = flag.String("dbUser", "rxlx", "postgres database user")
 	dbPass = flag.String("dbPass", "thereISnosp0)n", "postgres database password")
 )
 
 type Server struct {
-	Stats    Stats
-	Stopch   chan struct{}
-	Serverch chan Message
-	Memory   *sync.RWMutex
-	Addr     string
-	Gateway  *http.ServeMux
-	DB       *pgx.Conn
-	Intel    Intel
+	ID      string                 `json:"id"`
+	Logger  *log.Logger            `json:"-"`
+	Parser  *parser.Contextualizer `json:"-"`
+	DB      *pgxpool.Pool          `json:"-"`
+	Memory  *sync.RWMutex          `json:"-"`
+	Gateway *http.ServeMux         `json:"-"`
 }
 
-type Intel struct {
-	Stats             Stats                `json:"stats"`
-	RuntimeStats      map[string][]float64 `json:"runtime_stats"`
-	Ip4Addresses      map[string][]Ip4     `json:"ip4_addresses"`
-	Md5Values         []MD5                `json:"md5_values"`
-	SavedMd5Values    map[MD5]int          `json:"saved_md5_values"`
-	SavedIp4Addresses map[string]Ip4       `json:"saved_ip4_addresses"`
+type Match struct {
+	Kind    string `json:"kind"`
+	ID      int    `json:"id"`
+	Created int64  `json:"created"`
+	Saved   bool   `json:"saved"`
+	Value   string `json:"value"`
 }
 
-func NewIntel() Intel {
-	return Intel{
-		Stats:             make(Stats),
-		Ip4Addresses:      make(map[string][]Ip4),
-		SavedMd5Values:    make(map[MD5]int),
-		SavedIp4Addresses: make(map[string]Ip4),
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+
+// --HELPERS
+func NewSerer(id string, logger *log.Logger, parser *parser.Contextualizer, db *pgxpool.Pool) *Server {
+	return &Server{
+		ID:      id,
+		Logger:  logger,
+		Parser:  parser,
+		DB:      db,
+		Memory:  &sync.RWMutex{},
+		Gateway: http.NewServeMux(),
 	}
 }
 
-type Message struct {
-	Message string `json:"message"`
-	Error   bool   `json:"error"`
+func sanitizeIdentifier(s string) string {
+	return nonAlphanumericRegex.ReplaceAllString(s, "")
 }
 
-func NewServer(dsn string) *Server {
-	conn, err := pgx.Connect(context.Background(), dsn)
+func (s *Server) ProcessAndSave(ctx context.Context, text string) {
+	var wg sync.WaitGroup
+	for kind, regex := range s.Parser.Expressions {
+		matches := s.Parser.GetMatches(text, kind, regex)
+		wg.Add(1)
+		go func(kind string, matches []parser.Match) {
+			defer wg.Done()
+			for _, match := range matches {
+				if err := s.SaveMatch(ctx, Match{
+					Kind:    kind,
+					Created: time.Now().Unix(),
+					Saved:   true,
+					Value:   match.Value,
+				}); err != nil {
+					log.Printf("Error saving match: %v", err)
+				}
+			}
+		}(kind, matches)
+	}
+	wg.Wait()
+}
+
+// --DB
+func (s *Server) SaveMatch(ctx context.Context, match Match) error {
+	if len(match.Value) == 0 {
+		return fmt.Errorf("cannot save a match with an empty value")
+	}
+
+	tablePrefix := sanitizeIdentifier(match.Kind)
+	firstCharSuffix := sanitizeIdentifier(string(match.Value[0]))
+
+	if tablePrefix == "" || firstCharSuffix == "" {
+		return fmt.Errorf("could not generate a valid table name from match: %+v", match)
+	}
+	if firstCharSuffix == "." || firstCharSuffix == "/" {
+		firstCharSuffix = "other"
+	}
+
+	tableName := fmt.Sprintf("%s_%s", tablePrefix, firstCharSuffix)
+
+	createTableSQL := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS %s (
+			created BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			saved BOOLEAN NOT NULL DEFAULT FALSE,
+			kind TEXT NOT NULL,
+			id SERIAL PRIMARY KEY,
+			value TEXT NOT NULL UNIQUE
+        );`, tableName)
+	// fmt.Println("Executing SQL:", createTableSQL)
+	if _, err := s.DB.Exec(ctx, createTableSQL); err != nil {
+		return fmt.Errorf("failed to execute 'CREATE TABLE' for table %s: %w", tableName, err)
+	}
+
+	insertSQL := fmt.Sprintf(`
+		INSERT INTO %s (created, saved, kind, value) VALUES ($1, $2, $3, $4) ON CONFLICT(value) DO NOTHING;`, tableName)
+	// fmt.Println("Executing SQL:", insertSQL)
+	if _, err := s.DB.Exec(ctx, insertSQL, match.Created, match.Saved, match.Kind, match.Value); err != nil {
+		return fmt.Errorf("failed to execute 'INSERT INTO' for table %s: %w", tableName, err)
+	}
+
+	log.Printf("Successfully processed match. Table: %s, Value: %s", tableName, match.Value)
+	return nil
+}
+
+func (s *Server) FindMatchByValue(ctx context.Context, kind string, value string) (*Match, error) {
+	if kind == "" || value == "" {
+		return nil, fmt.Errorf("kind and value cannot be empty")
+	}
+	start := time.Now()
+	defer func(t time.Time) {
+		log.Printf("FindMatchByValue took %s for kind '%s' and value '%s'", time.Since(t), kind, value)
+	}(start)
+
+	tablePrefix := sanitizeIdentifier(kind)
+	firstCharSuffix := sanitizeIdentifier(string(value[0]))
+
+	if tablePrefix == "" || firstCharSuffix == "" {
+		return nil, fmt.Errorf("could not generate a valid table name from kind '%s' and value '%s'", kind, value)
+	}
+	if firstCharSuffix == "." || firstCharSuffix == "/" {
+		firstCharSuffix = "other"
+	}
+	tableName := fmt.Sprintf("%s_%s", tablePrefix, firstCharSuffix)
+
+	selectSQL := fmt.Sprintf(`
+        SELECT id, value, kind, created, saved FROM %s WHERE value = $1
+    `, tableName)
+
+	row := s.DB.QueryRow(ctx, selectSQL, value)
+
+	var foundMatch Match
+	err := row.Scan(&foundMatch.ID, &foundMatch.Value, &foundMatch.Kind, &foundMatch.Created, &foundMatch.Saved)
+
 	if err != nil {
-		time.Sleep(5 * time.Second)
-		conn, err = pgx.Connect(context.Background(), dsn)
-		if err != nil {
-			panic(err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("no match found for kind '%s' and value '%s'", kind, value)
 		}
+		return nil, fmt.Errorf("error querying table %s: %w", tableName, err)
 	}
-	memory := &sync.RWMutex{}
-	messagech := make(chan Message, 256)
-	s := &Server{
-		Stats:    make(Stats),
-		Serverch: messagech,
-		Addr:     ":8080",
-		DB:       conn,
-		Memory:   memory,
-		Gateway:  http.NewServeMux(),
-		Intel:    NewIntel(),
-	}
-	s.Gateway.HandleFunc("/ip4", s.Ip4Handler)
-	s.Gateway.HandleFunc("/displaystats", s.DisplayStatsHandler)
-	s.Gateway.HandleFunc("/bulk/ip4", s.BulkIp4Handler)
-	s.Gateway.HandleFunc("/get/ip4", s.GetIp4Handler)
-	s.Gateway.HandleFunc("/cache/ips", s.CachedIp4Handler)
-	s.Gateway.HandleFunc("/api/ip4", s.GetIP4FromFormHandler)
-	s.Gateway.HandleFunc("/api/ips", s.GetIpsAPIHandler)
-	s.Gateway.HandleFunc("/view", s.Ipv4ViewHandler)
-	s.Gateway.HandleFunc("/stats", s.GetStatsHandler)
-	s.Gateway.HandleFunc("/urlstats", s.GetUrlStatsHandler)
-	s.Gateway.HandleFunc("/toprequests", s.TopTenRequestHandler)
-	s.Gateway.HandleFunc("/sortedurlstats", s.GetSortedStatsHandler)
-	s.Gateway.HandleFunc("/urls", s.RequestedURLHandler)
-	s.Gateway.Handle("/static/", http.StripPrefix("/static/", s.FileServer()))
-	s.Stats["server_started"] = int(time.Now().Unix())
-	return s
+
+	return &foundMatch, nil
 }
 
-func (s *Server) FileServer() http.Handler {
-	return http.FileServer(http.Dir("./static"))
+type MatchRequest struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
 }
 
-func (s *Server) AddIp4(ip4 Ip4) {
-	firstOctect := string(ip4.Value[:1])
-	if firstOctect == "0" || firstOctect == "127" {
+type MatchResponse struct {
+	Matched bool   `json:"matched"`
+	Kind    string `json:"kind"`
+	Value   string `json:"value"`
+	ID      int    `json:"id,omitempty"`
+	Created int64  `json:"created,omitempty"`
+}
+
+// --HANDLERS
+func (s *Server) HandleFindMatchByValue(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req MatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
-	s.Memory.Lock()
-	defer s.Memory.Unlock()
-	_, ok := s.Intel.Ip4Addresses[firstOctect]
-	if !ok {
-		s.Intel.Ip4Addresses[firstOctect] = []Ip4{}
-	}
-	s.Intel.Ip4Addresses[firstOctect] = append(s.Intel.Ip4Addresses[firstOctect], ip4)
-	// if we want to enforce a maximum length, we could do it here
-}
 
-func (s *Server) Reconnect() {
-	s.DB.Close(context.Background())
-	conn, err := pgx.Connect(context.Background(), DsnFromEnv())
-	if err != nil {
-		time.Sleep(5 * time.Second)
-		conn, err = pgx.Connect(context.Background(), DsnFromEnv())
+	match, err := s.FindMatchByValue(ctx, req.Kind, req.Value)
+	if err != nil || match == nil {
+		result := MatchResponse{
+			Matched: false,
+			Kind:    req.Kind,
+			Value:   req.Value,
+		}
+		out, err := json.Marshal(result)
 		if err != nil {
-			panic(err)
+			http.Error(w, fmt.Sprintf("error encoding response: %v", err), http.StatusInternalServerError)
+			return
+		}
+		go func() {
+			if saveErr := s.SaveMatch(context.Background(), Match{
+				Kind:    req.Kind,
+				Created: time.Now().Unix(),
+				Saved:   true,
+				Value:   req.Value,
+			}); saveErr != nil {
+				log.Printf("error saving match for kind '%s' and value '%s': %v", req.Kind, req.Value, saveErr)
+			}
+		}()
+		w.Header().Set("Content-Type", "application/json")
+		// w.WriteHeader(http.StatusNotFound)
+		if _, err := w.Write(out); err != nil {
+			log.Printf("error writing response: %v", err)
+			return
+		}
+		return
+	}
+	result := MatchResponse{
+		Matched: true,
+		Kind:    match.Kind,
+		Value:   match.Value,
+		ID:      match.ID,
+		Created: match.Created,
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error encoding response: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(out); err != nil {
+		log.Printf("error writing response: %v", err)
+		return
+	}
+}
+
+type ParserRequest struct {
+	Value string `json:"value"`
+}
+
+func (s *Server) ParserHandler(w http.ResponseWriter, r *http.Request) {
+	var results []Match
+	var req ParserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.Value == "" {
+		http.Error(w, "value cannot be empty", http.StatusBadRequest)
+		return
+	}
+	ctx := context.Background()
+	for kind, regex := range s.Parser.Expressions {
+		matches := s.Parser.GetMatches(req.Value, kind, regex)
+		if len(matches) == 0 {
+			continue
+		}
+		for _, match := range matches {
+			m, err := s.FindMatchByValue(ctx, kind, match.Value)
+			if err != nil {
+				fmt.Println("Error finding match:", err)
+				// if errors.Is(err, fmt.Errorf("no match found for kind '%s' and value '%s'", kind, match.Value)) {
+				// If no match found, save it
+				fmt.Println("No match found, saving new match:", match.Value)
+				if err := s.SaveMatch(ctx, Match{
+					Kind:    kind,
+					Created: time.Now().Unix(),
+					Saved:   true,
+					Value:   match.Value,
+				}); err != nil {
+					log.Printf("error saving match for kind '%s' and value '%s': %v", kind, match.Value, err)
+				}
+			} else {
+				results = append(results, *m)
+			}
 		}
 	}
-	s.DB = conn
-}
-
-func DsnFromEnv() string {
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbUser := os.Getenv("DB_USER")
-	dbPass := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-	fmt.Println("postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName)
-	return "postgres://" + dbUser + ":" + dbPass + "@" + dbHost + ":" + dbPort + "/" + dbName
-}
-
-type Stats map[string]int
-type OrderedStats []Stat
-type Stat struct {
-	Key   string `json:"key"`
-	Value int    `json:"value"`
-}
-
-func (s Stats) DeleteStats(key string) {
-	delete(s, key)
-}
-
-func (s Stats) IsSaved() bool {
-	_, saved := s["saved"]
-	return saved
-}
-
-func (s Stats) Save() {
-	s["saved"] = 1
-}
-
-func (s Stats) Reset() {
-	fmt.Println("got new stats, resetting")
-	_, saved := s["saved"]
-	if saved {
-		delete(s, "saved")
+	w.Header().Set("Content-Type", "application/json")
+	out, err := json.Marshal(results)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error encoding response: %v", err), http.StatusInternalServerError)
+		return
 	}
-}
-
-func (s Stats) ToSlice() []Stat {
-	var stats []Stat
-	for key, value := range s {
-		stats = append(stats, Stat{Key: key, Value: value})
+	if _, err := w.Write(out); err != nil {
+		log.Printf("error writing response: %v", err)
+		return
 	}
-	return stats
+	s.Logger.Printf("Processed %d matches for value: %s", len(results), req.Value)
 }
-
-func (i *Intel) SetRuntimeStats(stats Stats) {
-	if i.RuntimeStats == nil {
-		i.RuntimeStats = make(map[string][]float64)
-	}
-	for key, value := range stats {
-		if _, ok := i.RuntimeStats[key]; !ok {
-			i.RuntimeStats[key] = []float64{}
-		}
-		if len(i.RuntimeStats[key]) > 100 {
-			i.RuntimeStats[key] = i.RuntimeStats[key][1:]
-		}
-		i.RuntimeStats[key] = append(i.RuntimeStats[key], float64(value))
-	}
-}
-
-func SortStatsMax(stats Stats) OrderedStats {
-	ordered := stats.ToSlice()
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].Value > ordered[j].Value
-	})
-	return ordered
-}
-
-var BaseHtml string = `
-<!DOCTYPE html>
-<html>
-
-<head>
-  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' *">
-  <script src="https://unpkg.com/htmx.org@2.0.4"
-    integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
-    crossorigin="anonymous"></script>
-  <link rel="stylesheet" href="/static/cowpower.css">
-</head>
-
-<body>
-  <div class="container">
-    <div id="loader">Loading...</div>
-    <div class="scrollbar">
-      <div class="thumb"></div>
-    </div>
-    <h1>ip addresses</h1>
-    <ul id="data-list"></ul>
-  </div>
-  <div class="search-area">
-    <h1>search</h1>
-    <form hx-post="/api/ip4" hx-target="#result" class="search-form" id="search-form"
-      hx-on::after-request="clearInput()">
-      <input type="text" name="ip" placeholder="Search IP4s" id="search-input">
-      <button type="submit">search</button>
-    </form>
-    <div id="result" class="results"></div>
-  </div>
-  <div class="search-area" hx-get="/toprequests" hx-trigger="load" hx-target="#urls" hx-swap="outerHTML">
-    <h1>top requests</h1>
-	<div id="urls" class="urls"></div>
-	</div>
-  <div class="search-area" hx-get="/displaystats" hx-trigger="load" hx-target="#stats" hx-swap="outerHTML">
-    <h1>stats</h1>
-    <div id="stats" class="stats"></div>
-  </div>
-
-  <script src="/static/f.js"></script>
-
-</body>
-
-</html>
-`
