@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+	ignoreList := make([]string, 0)
 	flag.Parse()
 	myLog := log.New(log.Writer(), "server: ", log.LstdFlags|log.Lshortfile)
 	myDBConf, err := pgxpool.ParseConfig(*conn)
@@ -28,7 +29,7 @@ func main() {
 	server := &Server{
 		ID:      "server1",
 		Logger:  myLog,
-		Parser:  parser.NewContextualizer(&parser.PrivateChecks{Ipv4: true}),
+		Parser:  parser.NewContextualizer(true, ignoreList, ignoreList),
 		DB:      pool,
 		Memory:  &sync.RWMutex{},
 		Gateway: http.NewServeMux(),
